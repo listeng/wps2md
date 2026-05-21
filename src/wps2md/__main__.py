@@ -6,7 +6,7 @@ from wps2md.core import WpsParseError, parse, to_markdown
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("usage: wps2md <file.wps>", file=sys.stderr)
+        print("usage: wps2md <file.wps|file.doc>", file=sys.stderr)
         return 2
     try:
         doc = parse(sys.argv[1])

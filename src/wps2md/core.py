@@ -313,16 +313,22 @@ def _read_paragraphs(
     return paragraphs
 
 
-def parse(path: Union[str, Path]) -> WpsDocument:
-    """Parse a .wps file and return a :class:`WpsDocument`.
+_SUPPORTED_SUFFIXES = (".wps", ".doc")
 
-    Only WPS Writer ``.wps`` files in OLE2 Word-binary form are supported.
-    Raises :class:`WpsParseError` for non-.wps inputs, non-WPS binaries,
-    encrypted files, or otherwise unreadable streams.
+
+def parse(path: Union[str, Path]) -> WpsDocument:
+    """Parse a .wps or .doc file and return a :class:`WpsDocument`.
+
+    Both legacy WPS Writer ``.wps`` files and Word 97-2003 ``.doc`` files
+    use the same OLE2 Word-binary container, so both are supported.
+    Raises :class:`WpsParseError` for unsupported extensions, non-Word
+    binaries, encrypted files, or otherwise unreadable streams.
     """
     path = Path(path)
-    if path.suffix.lower() != ".wps":
-        raise WpsParseError(f"Only .wps files are supported (got {path.suffix!r})")
+    if path.suffix.lower() not in _SUPPORTED_SUFFIXES:
+        raise WpsParseError(
+            f"Only .wps and .doc files are supported (got {path.suffix!r})"
+        )
     ole = olefile.OleFileIO(str(path))
     try:
         if not ole.exists("WordDocument"):

@@ -1,8 +1,8 @@
 # wps2md
 
 A tiny Python library and CLI for converting legacy **WPS Writer `.wps`**
-files (OLE2 Word-binary format, FIB magic `0xA5EC`/`0xA5DC`) into
-structured text and Markdown.
+and **Word 97-2003 `.doc`** files (OLE2 Word-binary format, FIB magic
+`0xA5EC`/`0xA5DC`) into structured text and Markdown.
 
 Unlike `.docx` (which is OOXML/zip and can be read by `python-docx`),
 `.wps` files saved by WPS Office are binary OLE2 compound documents.
@@ -21,6 +21,7 @@ pip install wps2md
 ```bash
 wps2md example.wps                 # print Markdown to stdout
 wps2md example.wps > example.md
+wps2md example.doc                 # .doc files also supported
 python -m wps2md example.wps       # equivalent
 ```
 
@@ -40,13 +41,13 @@ for p in doc.paragraphs:
 
 ## API
 
-- `parse(path) -> WpsDocument` — parse a `.wps` file.
+- `parse(path) -> WpsDocument` — parse a `.wps` or `.doc` file.
 - `WpsDocument` — dataclass with `main_text`, `paragraphs`, `footnotes`,
   `headers_footers`, `annotations`, `encoding`, `num_pages`.
 - `Paragraph(istd: int, text: str)` — one paragraph; `heading_level`
   returns 1-9 for built-in Heading styles, else 0.
 - `to_markdown(paragraphs) -> str` — render paragraphs as Markdown.
-- `WpsParseError` — raised for non-`.wps` inputs, encrypted files,
+- `WpsParseError` — raised for unsupported extensions, encrypted files,
   or unreadable streams.
 
 ## Limitations

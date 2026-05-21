@@ -34,8 +34,8 @@ def test_only_h1_in_sample(doc):
     assert all(ln.startswith("# ") for ln in h_lines)
 
 
-def test_rejects_non_wps_extension(tmp_path):
-    p = tmp_path / "foo.doc"
+def test_rejects_unsupported_extension(tmp_path):
+    p = tmp_path / "foo.txt"
     p.write_bytes(b"\xd0\xcf\x11\xe0")
     with pytest.raises(WpsParseError):
         parse(p)
