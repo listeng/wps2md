@@ -6,6 +6,7 @@ output plus a Markdown renderer that respects Heading 1-9 styles.
 """
 from __future__ import annotations
 
+import io
 import re
 import struct
 from dataclasses import dataclass, field
@@ -120,54 +121,54 @@ def _read_list_kinds(wd: bytes, table: bytes) -> dict[int, bool]:
     Unknown / unparseable lists are simply absent from the mapping.
 
     Layout (MS-DOC §2.4.1, §2.9.131, §2.9.150):
-        PlcfLst: U16 cLst, then cLst LSTF (28 bytes each), then variable LVLs.
-        PlfLfo:  U32 lfoMac, then lfoMac LFO (16 bytes each), then LFOData.
-        LSTF.lsid is at offset 0 (I32); rgistdForLst follows; first LVL's
-        LVLF.nfc is at offset 24 of each LVL after the LSTF array.
-    Rather than recover full LVL offsets (which depend on grpprl sizes), we
-    locate each LSTF's first LVLF.nfc by scanning the bytes that follow the
-    LSTF array, which is good enough to classify ordered vs bullet for ilvl 0.
+        PlfLst (FIB fcLcb index 73): U16 cLst, then cLst LSTF (28 bytes
+            each). The LVL array immediately follows the PlfLst structure
+            and runs up to the start of PlfLfo.
+        PlfLfo (FIB fcLcb index 74): U32 lfoMac, then lfoMac LFO
+            (16 bytes each), then LFOData.
+        LSTF.lsid is at offset 0 (I32); fSimpleList is bit 0 of the byte
+        at offset 26 of the LSTF.
+        LVLF (28 bytes): iStartAt at offset 0 (I32); nfc at offset 4 (U8);
+        cbGrpprlChpx at offset 24 (U8); cbGrpprlPapx at offset 25 (U8).
+        After LVLF: grpprlPapx, grpprlChpx, then xst (U16 cch + cch UTF-16
+        chars). Each LVL is variable-length; we walk them sequentially.
     """
     fib_base = 0x9A
-    fc_lst = _U32.unpack_from(wd, fib_base + 47 * 8)[0]
-    lcb_lst = _U32.unpack_from(wd, fib_base + 47 * 8 + 4)[0]
-    fc_lfo = _U32.unpack_from(wd, fib_base + 49 * 8)[0]
-    lcb_lfo = _U32.unpack_from(wd, fib_base + 49 * 8 + 4)[0]
+    fc_lst = _U32.unpack_from(wd, fib_base + 73 * 8)[0]
+    lcb_lst = _U32.unpack_from(wd, fib_base + 73 * 8 + 4)[0]
+    fc_lfo = _U32.unpack_from(wd, fib_base + 74 * 8)[0]
+    lcb_lfo = _U32.unpack_from(wd, fib_base + 74 * 8 + 4)[0]
     if lcb_lst < 2 or lcb_lfo < 4 or not table:
         return {}
     if fc_lst + lcb_lst > len(table) or fc_lfo + lcb_lfo > len(table):
         return {}
 
-    # --- Parse PlcfLst: cLst + LSTF[cLst] + LVL blob ---
+    # --- Parse PlfLst: cLst + LSTF[cLst]; LVL array follows in [fc_lst+lcb_lst, fc_lfo). ---
     lst_buf = table[fc_lst:fc_lst + lcb_lst]
     c_lst = _U16.unpack_from(lst_buf, 0)[0]
     lstf_size = 28
     if 2 + c_lst * lstf_size > len(lst_buf):
         return {}
+    lvl_blob = table[fc_lst + lcb_lst:fc_lfo]
     lsid_to_ordered: dict[int, bool] = {}
-    lvl_blob_off = 2 + c_lst * lstf_size
-    cursor = lvl_blob_off
+    cursor = 0
     for i in range(c_lst):
         lsid = struct.unpack_from("<i", lst_buf, 2 + i * lstf_size)[0]
-        # rgLVL count: 9 for multi-level lists, 1 for simple (bit at offset 26).
-        flags = lst_buf[2 + i * lstf_size + 26] if 2 + i * lstf_size + 26 < len(lst_buf) else 0
-        n_lvl = 1 if (flags & 0x10) else 9
+        # fSimpleList is bit 0 of the byte at LSTF offset 26.
+        flags = lst_buf[2 + i * lstf_size + 26]
+        n_lvl = 1 if (flags & 0x01) else 9
         nfc_first: int | None = None
         for j in range(n_lvl):
-            if cursor + 28 > len(lst_buf):
+            if cursor + 28 > len(lvl_blob):
                 break
-            # LVLF (28 bytes): nfc at offset 24 (U8).
-            nfc = lst_buf[cursor + 24]
-            cb_grpprl_papx = lst_buf[cursor + 25]
-            cb_grpprl_chpx = lst_buf[cursor + 26]
-            # After LVLF: cbGrpprlPapx + cbGrpprlChpx + xst (variable).
-            # xst: U16 cch + cch * U16 chars + U16 trailing reserved.
+            nfc = lvl_blob[cursor + 4]
+            cb_grpprl_chpx = lvl_blob[cursor + 24]
+            cb_grpprl_papx = lvl_blob[cursor + 25]
             lvl_data_off = cursor + 28 + cb_grpprl_papx + cb_grpprl_chpx
-            if lvl_data_off + 2 > len(lst_buf):
+            if lvl_data_off + 2 > len(lvl_blob):
                 break
-            cch = _U16.unpack_from(lst_buf, lvl_data_off)[0]
-            lvl_end = lvl_data_off + 2 + cch * 2
-            cursor = lvl_end
+            cch = _U16.unpack_from(lvl_blob, lvl_data_off)[0]
+            cursor = lvl_data_off + 2 + cch * 2
             if j == 0:
                 nfc_first = nfc
         if nfc_first is not None and nfc_first != _NFC_NONE:
@@ -316,20 +317,25 @@ def _read_paragraphs(
 _SUPPORTED_SUFFIXES = (".wps", ".doc")
 
 
-def parse(path: Union[str, Path]) -> WpsDocument:
+def parse(source: Union[str, Path, bytes, bytearray, memoryview]) -> WpsDocument:
     """Parse a .wps or .doc file and return a :class:`WpsDocument`.
 
-    Both legacy WPS Writer ``.wps`` files and Word 97-2003 ``.doc`` files
-    use the same OLE2 Word-binary container, so both are supported.
-    Raises :class:`WpsParseError` for unsupported extensions, non-Word
-    binaries, encrypted files, or otherwise unreadable streams.
+    ``source`` may be a filesystem path (``str`` or :class:`pathlib.Path`)
+    or the raw bytes of an OLE2 Word-binary document. Both legacy WPS
+    Writer ``.wps`` files and Word 97-2003 ``.doc`` files use the same
+    container, so both are supported. Raises :class:`WpsParseError` for
+    unsupported extensions, non-Word binaries, encrypted files, or
+    otherwise unreadable streams.
     """
-    path = Path(path)
-    if path.suffix.lower() not in _SUPPORTED_SUFFIXES:
-        raise WpsParseError(
-            f"Only .wps and .doc files are supported (got {path.suffix!r})"
-        )
-    ole = olefile.OleFileIO(str(path))
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        ole = olefile.OleFileIO(io.BytesIO(bytes(source)))
+    else:
+        path = Path(source)
+        if path.suffix.lower() not in _SUPPORTED_SUFFIXES:
+            raise WpsParseError(
+                f"Only .wps and .doc files are supported (got {path.suffix!r})"
+            )
+        ole = olefile.OleFileIO(str(path))
     try:
         if not ole.exists("WordDocument"):
             raise WpsParseError("No WordDocument stream — not a Word binary file")

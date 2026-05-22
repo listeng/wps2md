@@ -30,7 +30,9 @@ python -m wps2md example.wps       # equivalent
 ```python
 from wps2md import parse, to_markdown
 
-doc = parse("example.wps")
+doc = parse("example.wps")             # path (str or pathlib.Path)
+# or pass raw bytes (e.g. from an upload, S3, zip member, etc.)
+# doc = parse(open("example.wps", "rb").read())
 print(doc.main_text)                # plain text of the main body
 print(doc.num_pages)                # from OLE SummaryInformation
 print(to_markdown(doc.paragraphs))  # Markdown with H1-H9 from Word styles
@@ -41,7 +43,8 @@ for p in doc.paragraphs:
 
 ## API
 
-- `parse(path) -> WpsDocument` — parse a `.wps` or `.doc` file.
+- `parse(source) -> WpsDocument` — parse a `.wps`/`.doc` file from a
+  path (`str` or `pathlib.Path`) or from raw `bytes`.
 - `WpsDocument` — dataclass with `main_text`, `paragraphs`, `footnotes`,
   `headers_footers`, `annotations`, `encoding`, `num_pages`.
 - `Paragraph(istd: int, text: str)` — one paragraph; `heading_level`

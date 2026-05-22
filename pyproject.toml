@@ -1,6 +1,6 @@
 [project]
 name = "wps2md"
-version = "0.2.0"
+version = "0.3.0"
 description = "Parse legacy WPS Writer (.wps) and Word 97-2003 (.doc) OLE2 binary files into structured text and Markdown."
 readme = "README.md"
 license = { text = "MIT" }
